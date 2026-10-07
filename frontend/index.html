@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WhiteFIN — Agentic Investment Assistant</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">W</span>
+      <div>
+        <div class="brand-name">WhiteFIN</div>
+        <div class="brand-sub">Agentic investment assistant</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="status-chip" class="chip">Connecting…</span>
+      <button id="history-btn" class="btn ghost" type="button">History</button>
+      <a id="docs-link" class="btn ghost" href="#" target="_blank" rel="noopener">API docs</a>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ============ LEFT: input + live agent trace ============ -->
+    <aside class="left">
+      <section class="card">
+        <h2>What do you want to do?</h2>
+        <form id="analyze-form">
+          <textarea id="prompt" rows="4" required minlength="3"
+            placeholder="e.g. I have ₹1,00,000 and can add ₹5,000 a month. I'm 22, moderate risk, investing for 15 years."></textarea>
+          <div class="examples" id="examples"></div>
+          <div class="level-pick">
+            <span class="muted small">Explain it for</span>
+            <div class="segmented" id="level-input" role="radiogroup" aria-label="Explanation level">
+              <button type="button" data-level="" class="active" title="Detect from how you write">Auto</button>
+              <button type="button" data-level="beginner">Beginner</button>
+              <button type="button" data-level="advanced">Experienced</button>
+            </div>
+          </div>
+          <details class="advanced">
+            <summary>Exact values (optional — these override the text)</summary>
+            <div class="grid2">
+              <label>Lump sum (₹)<input type="number" id="f-amount" min="0" step="any" placeholder="50000"></label>
+              <label>Monthly SIP (₹)<input type="number" id="f-sip" min="0" step="any" placeholder="0"></label>
+              <label>Age<input type="number" id="f-age" min="10" max="100" placeholder="22"></label>
+              <label>Horizon (years)<input type="number" id="f-horizon" min="1" max="60" placeholder="10"></label>
+              <label class="span2">Risk appetite
+                <select id="f-risk">
+                  <option value="">— read from text —</option>
+                  <option value="conservative">Conservative</option>
+                  <option value="moderate">Moderate</option>
+                  <option value="aggressive">Aggressive</option>
+                </select>
+              </label>
+            </div>
+          </details>
+          <button id="analyze-btn" class="btn primary wide" type="submit">Analyze &amp; build my portfolio</button>
+        </form>
+      </section>
+
+      <section class="card" id="clarify-card" hidden>
+        <h2>A few quick questions</h2>
+        <p class="muted">The profiling agent couldn't find these in your message, so it's asking instead of guessing.</p>
+        <form id="clarify-form"></form>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Agent activity</h2>
+          <span class="muted small" id="trace-total"></span>
+        </div>
+        <ol class="pipeline" id="pipeline"></ol>
+        <ol class="trace" id="trace"><li class="muted empty">Run an analysis to watch the agents work.</li></ol>
+      </section>
+    </aside>
+
+    <!-- ============ RIGHT: results ============ -->
+    <section class="right" id="results">
+      <div class="placeholder card" id="placeholder">
+        <h2>How it works</h2>
+        <p>Nine agents cooperate through a LangGraph state machine. They don't just run in a line: the
+          profiling agent can stop and ask you questions, two pairs of agents run in parallel, and a
+          validator agent can reject the portfolio and send it back for revision with specific fixes.</p>
+        <div id="graph-legend" class="legend-flow"></div>
+        <p class="muted small">All numbers come from deterministic finance code. An optional LLM only rewrites the wording, and its text is
+          rejected if it changes any figure.</p>
+      </div>
+
+      <div id="result-body" hidden>
+        <div class="result-head">
+          <div class="banner" id="data-banner" hidden></div>
+          <div class="view-toggle">
+            <span class="muted small">View as</span>
+            <div class="segmented" id="level-view" role="radiogroup" aria-label="View level">
+              <button type="button" data-level="beginner">Beginner</button>
+              <button type="button" data-level="advanced">Experienced</button>
+            </div>
+          </div>
+        </div>
+
+        <section class="nutshell card" id="nutshell"></section>
+
+        <div class="kpis" id="kpis"></div>
+
+        <div class="row">
+          <section class="card">
+            <h2 id="alloc-title">Allocation</h2>
+            <div class="chart-box small-chart"><canvas id="alloc-chart"></canvas></div>
+            <ul class="adjustments" id="adjustments"></ul>
+          </section>
+          <section class="card grow">
+            <div class="card-head"><h2>What to buy</h2><span class="muted small" id="exec-basis"></span></div>
+            <div class="table-wrap"><table id="holdings"></table></div>
+            <p class="muted small" id="exec-note"></p>
+          </section>
+        </div>
+
+        <section class="card">
+          <h2 id="explain-title">Why — the explanation</h2>
+          <div id="explanation" class="explanation"></div>
+        </section>
+
+        <!-- experienced-only analytics -->
+        <div class="row adv-only">
+          <section class="card grow">
+            <h2>Efficient frontier (equity sleeve)</h2>
+            <div class="chart-box"><canvas id="frontier-chart"></canvas></div>
+            <p class="muted small">Best expected return for each level of risk under the same per-stock and sector caps.
+              Dots are individual stocks; the star is the chosen sleeve.</p>
+          </section>
+          <section class="card grow">
+            <h2>Capital vs risk contribution</h2>
+            <div class="chart-box"><canvas id="riskc-chart"></canvas></div>
+            <p class="muted small">Share of sleeve variance each holding contributes: w<sub>i</sub>(Σw)<sub>i</sub> / wᵀΣw.</p>
+          </section>
+        </div>
+        <section class="card adv-only">
+          <div class="card-head"><h2>Correlation matrix (daily returns)</h2><span class="muted small" id="corr-note"></span></div>
+          <div class="table-wrap"><table id="corr" class="heatmap"></table></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2 id="sim-title">Possible futures</h2>
+            <label class="toggle"><input type="checkbox" id="real-toggle"> show in today's money</label>
+          </div>
+          <div class="chart-box"><canvas id="sim-chart"></canvas></div>
+          <p class="muted small" id="sim-note"></p>
+        </section>
+
+        <div class="row">
+          <section class="card grow">
+            <h2 id="bt-title">Out-of-sample backtest</h2>
+            <p class="muted small beg-only">We picked the stocks using only data from before this period, then tracked what happened.
+              Lines start at 100 — 90 means a 10% drop.</p>
+            <div class="chart-box"><canvas id="bt-chart"></canvas></div>
+            <div class="table-wrap adv-only"><table id="bt-table"></table></div>
+            <p class="muted small" id="bt-note"></p>
+          </section>
+          <section class="card validator-card adv-only">
+            <h2>Validator verdict</h2>
+            <div id="validator"></div>
+          </section>
+        </div>
+
+        <section class="card adv-only">
+          <h2>Stock universe analysis</h2>
+          <div class="table-wrap"><table id="universe"></table></div>
+        </section>
+
+        <p class="disclaimer" id="disclaimer"></p>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="history-dialog">
+    <div class="card-head"><h2>Past analyses</h2><button class="btn ghost" id="history-close" type="button">Close</button></div>
+    <ul id="history-list" class="history-list"></ul>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
