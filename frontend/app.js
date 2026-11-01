@@ -3,8 +3,11 @@
  * over fetch, since EventSource can't POST), and renders the result. */
 
 const params = new URLSearchParams(location.search);
+// Same origin whenever FastAPI serves this page (local :8000, Docker, Hugging Face
+// Spaces...). Only VS Code Live Server (:5500) or opening the file directly
+// needs the local backend address. ?api=https://... overrides everything.
 const API = params.get("api")
-  || (location.protocol.startsWith("http") && location.port === "8000" ? "" : "http://127.0.0.1:8000");
+  ?? (location.protocol.startsWith("http") && location.port !== "5500" ? "" : "http://127.0.0.1:8000");
 
 const $ = (id) => document.getElementById(id);
 const charts = {};
@@ -24,12 +27,13 @@ const EXAMPLES = [
 const STAGES = [
   [["user_profiling", "Profiling"]],
   [["clarify", "Clarify"], ["market_intelligence", "Market data"]],
-  [["fundamental_analysis", "Fundamentals"], ["risk_assessment", "Risk"]],
+  [["fundamental_analysis", "Fundamentals"], ["risk_assessment", "Risk"], ["news_sentiment", "News"]],
+  [["strategy_selector", "Strategy"]],
   [["portfolio_optimization", "Optimizer"], ["validator", "Validator"]],
   [["scenario_simulation", "Monte Carlo"], ["backtest", "Backtest"]],
   [["explainability", "Explainability"]],
 ];
-const STAGE_NOTES = { 1: "either / or", 2: "parallel", 3: "loop until approved", 4: "parallel" };
+const STAGE_NOTES = { 1: "either / or", 2: "parallel", 3: "MPT vs HRP", 4: "loop until approved", 5: "parallel" };
 
 /* ---------------------------------------------------------------- utils */
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -190,7 +194,8 @@ function renderLegend() {
   $("graph-legend").innerHTML = [
     `<span class="lf">Profiling</span>`, `<span class="arrow">→ asks you if info is missing →</span>`,
     `<span class="lf">Market data</span>`, `<span class="arrow">→</span>`,
-    `<span class="lf par">Fundamentals ∥ Risk</span>`, `<span class="arrow">→</span>`,
+    `<span class="lf par">Fundamentals ∥ Risk ∥ News</span>`, `<span class="arrow">→</span>`,
+    `<span class="lf">Strategy (MPT vs HRP)</span>`, `<span class="arrow">→</span>`,
     `<span class="lf loop">Optimizer ⇄ Validator</span>`, `<span class="arrow">→</span>`,
     `<span class="lf par">Monte Carlo ∥ Backtest</span>`, `<span class="arrow">→</span>`,
     `<span class="lf">Explainability</span>`,
@@ -243,6 +248,7 @@ function renderResult(r) {
   renderSimulation(r.simulation);
   renderBacktest(r.backtest);
   renderValidator(r.validation, r.validation_history);
+  renderStrategy(r.strategy, r.optimized_portfolio);
   renderUniverse(r);
   $("disclaimer").textContent = r.explanation.disclaimer;
   applyView();
@@ -425,6 +431,26 @@ function renderBacktest(bt) {
   $("bt-note").textContent = `Trained ${bt.train_period[0]} → ${bt.train_period[1]}, tested ${bt.test_period[0]} → ${bt.test_period[1]}. ` + bt.caveats.join(" ");
 }
 
+function renderStrategy(sel, opt) {
+  const card = $("strategy-card");
+  if (!sel) { card.hidden = true; return; }      // older history items
+  card.hidden = false;
+  const used = (opt.strategy || "mpt").toUpperCase();
+  const sc = sel.scores || {};
+  if (sc.mpt && sc.hrp) {
+    const row = (k, name) => { const m = sc[k];
+      return `<tr class="${k === sel.strategy ? "selected" : ""}"><td><b>${name}</b><br><span class="muted small">${esc(m.method)}</span></td>
+        <td class="num">${pct(m.total_return)}</td><td class="num">${pct(m.annual_volatility)}</td><td class="num">${num(m.sharpe_ratio)}</td>
+        <td class="num">${pct(m.max_drawdown)}</td><td class="num">${pct(m.largest_weight, 0)}</td></tr>`; };
+    $("strategy-table").innerHTML = `<tr><th>Method</th><th class="num">Return</th><th class="num">Volatility</th><th class="num">Sharpe</th>
+      <th class="num">Max drawdown</th><th class="num">Largest weight</th></tr>` + row("mpt", "MPT") + row("hrp", "HRP");
+  } else $("strategy-table").innerHTML = "";
+  const tp = sel.test_period ? `Tested on ${sel.test_period[0]} → ${sel.test_period[1]} (held out). ` : "";
+  const override = used !== sel.strategy.toUpperCase() ? ` The Validator then switched the optimizer to ${used}.` : "";
+  $("strategy-note").textContent = `${tp}Selector chose ${sel.strategy.toUpperCase()}: ${sel.reason}${override} `
+    + (sel.caveats || []).join(" ");
+}
+
 function renderValidator(v, history) {
   const labels = { approved: "Approved", approved_with_warnings: "Approved with warnings", revise: "Revise" };
   let html = `<div class="verdict ${v.verdict}">${labels[v.verdict]} after ${v.attempt} attempt${v.attempt > 1 ? "s" : ""}</div>`;
@@ -514,6 +540,13 @@ function renderCorrelation(a) {
 function renderUniverse(r) {
   const f = r.fundamentals, risk = r.risk_metrics, opt = r.optimized_portfolio, md = r.market_data;
   const chosen = new Set(Object.keys(opt.equity_weights_within_stocks_sleeve));
+  const news = (r.news && r.news.per_ticker) || {};
+  const newsCell = (t) => {
+    const n = news[t];
+    if (!n || n.sentiment == null) return '<span class="muted">—</span>';
+    const flag = n.severe ? ` <span class="tag flag" title="${esc(n.severe_reason)}">red flag</span>` : "";
+    return `<span title="${esc((n.headlines[0] || {}).title || "")}">${n.sentiment > 0 ? "+" : ""}${num(n.sentiment)}</span>${flag}`;
+  };
   const rows = Object.entries(f).sort((a, b) => b[1].fundamental_score - a[1].fundamental_score).map(([t, x]) => {
     const rk = risk[t] || {};
     const src = md.stocks[t].source === "live" ? '<span class="tag live">live</span>' : '<span class="tag synthetic">synthetic</span>';
@@ -521,10 +554,10 @@ function renderUniverse(r) {
       <td class="num"><b>${num(x.fundamental_score, 0)}</b></td><td class="num">${num(x.pe, 1)}</td><td class="num">${num(x.pb, 1)}</td>
       <td class="num">${pct(x.roe)}</td><td class="num">${x.is_financial ? "n/a" : num(x.debt_to_equity)}</td><td class="num">${pct(x.profit_margin)}</td>
       <td class="num">${pct(rk.annual_volatility)}</td><td class="num">${num(rk.beta)}</td><td class="num">${pct(rk.max_drawdown)}</td>
-      <td class="num">${opt.expected_returns_used[t] != null ? pct(opt.expected_returns_used[t]) : "—"}</td><td>${src}</td></tr>`;
+      <td class="num">${opt.expected_returns_used[t] != null ? pct(opt.expected_returns_used[t]) : "—"}</td><td>${newsCell(t)}</td><td>${src}</td></tr>`;
   });
   $("universe").innerHTML = `<tr><th>Stock</th><th>Sector</th><th class="num">Score</th><th class="num">P/E</th><th class="num">P/B</th><th class="num">ROE</th>
-    <th class="num">D/E</th><th class="num">Margin</th><th class="num">Vol</th><th class="num">Beta</th><th class="num">Max DD</th><th class="num">Exp. return</th><th>Data</th></tr>`
+    <th class="num">D/E</th><th class="num">Margin</th><th class="num">Vol</th><th class="num">Beta</th><th class="num">Max DD</th><th class="num">Exp. return</th><th>News</th><th>Data</th></tr>`
     + rows.join("");
 }
 

@@ -45,7 +45,7 @@ async def lifespan(_app: FastAPI):  # replaces the deprecated @app.on_event("sta
 app = FastAPI(
     title="WhiteFIN API",
     description="Agentic AI investment assistant — educational project, not investment advice.",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
@@ -113,6 +113,8 @@ def _build_result(state: dict) -> dict:
             "validation_history": state.get("validation_history", []),
             "simulation": state["simulation"],
             "backtest": state["backtest"],
+            "news": state.get("news"),
+            "strategy": state.get("strategy"),
             "explanation": state["explanation"],
         })
     result = _jsonable(result)

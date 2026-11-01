@@ -5,38 +5,38 @@ The agent graph (LangGraph). v1 was a straight line in which every agent ran
 once, in a fixed order, and nothing could change the route. v2 makes
 decisions at runtime:
 
-                         ┌──────────────┐
-             START ────► │ user_profiling│
-                         └──────┬───────┘
-              missing info?     │ (conditional edge)
-          ┌──────── yes ────────┴───────── no ───────┐
-          ▼                                          ▼
-    ┌───────────┐                        ┌─────────────────────┐
-    │  clarify  │──► END                 │ market_intelligence │
-    │ (asks the │  (human-in-the-loop:   └─────────┬───────────┘
-    │   user)   │   UI re-submits with       ┌─────┴──────┐   parallel fan-out
-    └───────────┘   the answers)             ▼            ▼
-                                   fundamental_analysis  risk_assessment
-                                             └─────┬──────┘   join (waits for both)
-                                                   ▼
-                                   ┌──► portfolio_optimization
-                       feedback    │               ▼
-                    (exclude stock,│          validator ── approved? ──┐
-                     tighten caps, │               │ no, fixable &      │ yes
-                     cut equity)   └───────────────┘ attempts left      │
-                                                         ┌──────────────┴──┐ parallel fan-out
-                                                         ▼                 ▼
-                                               scenario_simulation      backtest
-                                                         └────────┬────────┘ join
-                                                                  ▼
-                                                           explainability ──► END
+        START ──► user_profiling ──(missing info?)──► clarify ──► END
+                        │ no                     (UI asks, then re-submits)
+                        ▼
+                market_intelligence
+          ┌─────────────┼──────────────┐        parallel fan-out
+          ▼             ▼              ▼
+   fundamental     risk_assessment   news_sentiment
+          └─────────────┼──────────────┘        join (waits for all three)
+                        ▼
+                strategy_selector     (MPT vs HRP bake-off on held-out data)
+                        ▼
+            ┌──► portfolio_optimization
+  feedback  │             ▼
+ (exclude,  │         validator ── approved? ──┐
+  caps, cut │             │ no, fixable &       │ yes
+  equity,   └─────────────┘ attempts left       │
+  use HRP)                              ┌───────┴────────┐  parallel fan-out
+                                        ▼                ▼
+                               scenario_simulation    backtest
+                                        └───────┬────────┘  join
+                                                ▼
+                                         explainability ──► END
 
 Agentic behaviours:
   1. Clarification gate — the graph refuses to guess required facts and asks.
-  2. Critic loop — the validator's feedback changes what the optimizer does
-     on its next attempt (generate -> critique -> revise).
-  3. Parallel branches with joins — independent agents run concurrently.
-  4. Every agent appends to a shared `trace`, which the API streams live.
+  2. Strategy choice from evidence — the Strategy Selector tests MPT and HRP on
+     data they never saw and picks the method for this request.
+  3. Critic loop — the validator's feedback changes what the optimizer does
+     on its next attempt (generate -> critique -> revise), including dropping
+     stocks with severe news red flags and overruling the strategy choice.
+  4. Parallel branches with joins — independent agents run concurrently.
+  5. Every agent appends to a shared `trace`, which the API streams live.
 """
 import operator
 import time
@@ -47,6 +47,7 @@ from langgraph.graph import StateGraph, START, END
 from agents import (
     user_profiling, market_intelligence, fundamental_analysis, risk_assessment,
     portfolio_optimization, validator, scenario_simulation, backtest, explainability,
+    news_sentiment, strategy_selector,
 )
 from config import MAX_OPTIMIZATION_ATTEMPTS
 
@@ -61,6 +62,8 @@ class WhiteFinState(TypedDict, total=False):
     market_data: dict
     fundamentals: dict
     risk_metrics: dict
+    news: dict
+    strategy: dict
     attempt: int
     feedback: dict
     optimized_portfolio: dict
@@ -78,6 +81,8 @@ AGENT_LABELS = {
     "market_intelligence": "Market Intelligence",
     "fundamental_analysis": "Fundamental Analysis",
     "risk_assessment": "Risk Assessment",
+    "news_sentiment": "News & Sentiment",
+    "strategy_selector": "Strategy Selector",
     "portfolio_optimization": "Portfolio Optimization",
     "validator": "Validator",
     "scenario_simulation": "Scenario Simulation",
@@ -151,11 +156,33 @@ def node_risk_assessment(state):
     return {"risk_metrics": r}, msg, {}
 
 
+@traced("news_sentiment")
+def node_news_sentiment(state):
+    n = news_sentiment.run(state["market_data"])
+    if n["status"] == "no_data":
+        msg = "No live headlines (offline/demo data) — nothing flagged."
+    else:
+        moods = [v["sentiment"] for v in n["per_ticker"].values() if v["sentiment"] is not None]
+        avg = sum(moods) / len(moods) if moods else 0
+        flags = f"red flags: {', '.join(t.replace('.NS', '') for t in n['flagged'])}" if n["flagged"] else "no red flags"
+        msg = f"Headlines for {len(moods)} stocks via {n['method']}; average mood {avg:+.2f}; {flags}."
+    return {"news": n}, msg, {"flagged": n["flagged"]}
+
+
+@traced("strategy_selector")
+def node_strategy_selector(state):
+    exclude = state.get("news", {}).get("flagged", [])
+    s = strategy_selector.run(state["user_profile"], state["market_data"], state["fundamentals"], exclude)
+    return {"strategy": s}, f"Chose {s['strategy'].upper()}: {s['reason']}", {"scores": s["scores"]}
+
+
 @traced("portfolio_optimization")
 def node_portfolio_optimization(state):
     attempt = state.get("attempt", 0) + 1
     feedback = state.get("feedback", {})
-    opt = portfolio_optimization.run(state["user_profile"], state["market_data"], state["fundamentals"], feedback)
+    chosen = state.get("strategy", {}).get("strategy", "mpt")
+    opt = portfolio_optimization.run(state["user_profile"], state["market_data"], state["fundamentals"],
+                                     feedback, strategy=chosen)
     b = opt["asset_class_allocation"]
     msg = (f"Attempt {attempt}: {b['stocks']:.0%} stocks / {b['bonds']:.0%} bonds / {b['gold']:.0%} gold / "
            f"{b['cash']:.0%} cash; {len(opt['equity_weights_within_stocks_sleeve'])} stocks via "
@@ -166,7 +193,8 @@ def node_portfolio_optimization(state):
 
 @traced("validator")
 def node_validator(state):
-    v = validator.run(state["user_profile"], state["optimized_portfolio"], state["attempt"], state.get("feedback", {}))
+    v = validator.run(state["user_profile"], state["optimized_portfolio"], state["attempt"],
+                      state.get("feedback", {}), news=state.get("news"))
     passed = sum(c["passed"] for c in v["checks"])
     if v["verdict"] == "revise":
         msg = f"{passed}/{len(v['checks'])} checks passed — sending back: {'; '.join(v['failed'])}."
@@ -193,7 +221,8 @@ def node_scenario_simulation(state):
 
 @traced("backtest")
 def node_backtest(state):
-    bt = backtest.run(state["optimized_portfolio"], state["market_data"], state["fundamentals"])
+    bt = backtest.run(state["optimized_portfolio"], state["market_data"], state["fundamentals"],
+                      strategy_info=state.get("strategy"))
     if bt["available"]:
         msg = (f"Out-of-sample year: {bt['strategy']['total_return']:+.1%} vs "
                f"{bt['benchmark']['total_return']:+.1%} benchmark.")
@@ -234,6 +263,8 @@ def build_graph():
     g.add_node("market_intelligence", node_market_intelligence)
     g.add_node("fundamental_analysis", node_fundamental_analysis)
     g.add_node("risk_assessment", node_risk_assessment)
+    g.add_node("news_sentiment", node_news_sentiment)
+    g.add_node("strategy_selector", node_strategy_selector)
     g.add_node("portfolio_optimization", node_portfolio_optimization)
     g.add_node("validator", node_validator)
     g.add_node("scenario_simulation", node_scenario_simulation)
@@ -245,7 +276,9 @@ def build_graph():
     g.add_edge("clarify", END)
     g.add_edge("market_intelligence", "fundamental_analysis")
     g.add_edge("market_intelligence", "risk_assessment")
-    g.add_edge(["fundamental_analysis", "risk_assessment"], "portfolio_optimization")
+    g.add_edge("market_intelligence", "news_sentiment")
+    g.add_edge(["fundamental_analysis", "risk_assessment", "news_sentiment"], "strategy_selector")
+    g.add_edge("strategy_selector", "portfolio_optimization")
     g.add_edge("portfolio_optimization", "validator")
     g.add_conditional_edges("validator", route_after_validation,
                             ["portfolio_optimization", "scenario_simulation", "backtest"])

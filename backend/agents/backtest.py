@@ -51,13 +51,16 @@ def _buy_and_hold(prices: pd.DataFrame, weights: dict) -> pd.Series:
     return 100 * (rel * w).sum(axis=1)
 
 
-def run(portfolio: dict, market_data: dict, fundamentals: dict) -> dict:
+def run(portfolio: dict, market_data: dict, fundamentals: dict, strategy_info: dict | None = None) -> dict:
     shortlist = portfolio["equity_shortlist"]
     stocks = market_data["stocks"]
     prices = pd.DataFrame({t: stocks[t]["history"] for t in shortlist}).dropna()
     bench_raw = market_data["benchmark"]["history"]
 
     caveats = ["Fundamental scores use today's data (mild look-ahead bias)."]
+    if (strategy_info or {}).get("decided_by") == "out_of_sample_bakeoff":
+        caveats.append("The Strategy Selector used this same test year to pick MPT or HRP, "
+                       "so this result is slightly flattering (selection bias).")
     if market_data["data_source"] != "live":
         caveats.insert(0, "Some or all prices are synthetic demo data — these results are illustrative only.")
 

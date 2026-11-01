@@ -149,6 +149,88 @@ def _stock_cards(state: dict, level: str) -> list[dict]:
     return cards
 
 
+# ------------------------------------------------------------------ strategy & news (new agents)
+def _validator_switched(state: dict) -> bool:
+    chosen = (state.get("strategy") or {}).get("strategy", "mpt")
+    return state["optimized_portfolio"].get("strategy") == "hrp" and chosen != "hrp"
+
+
+def _beginner_strategy_point(state: dict) -> str:
+    used = state["optimized_portfolio"].get("strategy", "mpt")
+    if _validator_switched(state):
+        return ("How much goes into each company: the first split put too much in too few companies, so our "
+                "checker switched to a method that spreads risk evenly across groups of similar companies.")
+    if used == "hrp":
+        style = "spreads risk evenly across groups of companies that tend to move together"
+    else:
+        style = "balances expected growth against the ups and downs"
+    sel = state.get("strategy") or {}
+    if sel.get("decided_by") == "out_of_sample_bakeoff":
+        return ("How much goes into each company: we tried two ways of splitting the money on last year's prices "
+                f"(hidden from both) and kept the one that held up better — this time, the one that {style}.")
+    return f"How much goes into each company: we used the method that {style}."
+
+
+def _advanced_strategy_points(state: dict) -> list[str]:
+    sel = state.get("strategy") or {}
+    sc = sel.get("scores") or {}
+    out = []
+    if sc.get("mpt") and sc.get("hrp"):
+        m, h = sc["mpt"], sc["hrp"]
+        tp = sel.get("test_period") or ["?", "?"]
+        out.append(f"Strategy Selector (OOS {tp[0]} → {tp[1]}): MPT Sharpe {m['sharpe_ratio']}, MDD {pct(m['max_drawdown'])} "
+                   f"vs HRP Sharpe {h['sharpe_ratio']}, MDD {pct(h['max_drawdown'])} → {sel['strategy'].upper()}")
+    elif sel:
+        out.append(f"Strategy Selector: {sel.get('reason', '')}")
+    if _validator_switched(state):
+        out.append("Validator overrode the selector: MPT breached concentration limits, re-solved with HRP")
+    return out
+
+
+def _news_section(state: dict, level: str) -> dict | None:
+    news = state.get("news")
+    if not news:
+        return None
+    opt = state["optimized_portfolio"]
+    held = list(opt["equity_weights_within_stocks_sleeve"])
+    per = news.get("per_ticker", {})
+    dropped = [t for t in opt.get("excluded_tickers", []) if t in set(news.get("flagged", []))]
+
+    if news.get("status") == "no_data":
+        msg = ("Live news wasn't available for this run, so headlines weren't checked."
+               if level == "beginner" else "No live headlines (offline/demo data); rule 9 passed vacuously.")
+        return {"id": "news", "title": "In the news" if level == "beginner" else "News & sentiment",
+                "lead": "", "points": [msg]}
+
+    points = []
+    for t in held:
+        v = per.get(t) or {}
+        if v.get("sentiment") is None:
+            points.append(f"{_short(t)}: no recent headlines found")
+            continue
+        if level == "beginner":
+            mood = {"positive": "mostly good news", "negative": "mostly worrying news",
+                    "neutral": "mixed or ordinary news"}[v["label"]]
+            line = f"{_short(t)}: {mood}"
+        else:
+            line = f"{_short(t)}: sentiment {v['sentiment']:+.2f} ({v['label']}, {v['headline_count']} headlines)"
+        if v.get("headlines"):
+            line += f" — e.g. \"{v['headlines'][0]['title']}\""
+        points.append(line)
+    for t in dropped:
+        reason = (per.get(t) or {}).get("severe_reason") or "serious red flag in the news"
+        points.append(f"Removed {_short(t)} — {reason}" if level == "beginner"
+                      else f"Dropped by Validator rule 9: {_short(t)} — {reason}")
+    if level == "beginner":
+        lead = ("We read recent headlines about each company. The mood is shown for information only — it doesn't "
+                "change how much we put in. But a company in serious trouble (like a fraud case) is removed.")
+    else:
+        lead = (f"Classifier: {news.get('method')}. Sentiment is informational only (not a return view); "
+                f"severe flags feed Validator rule 9, which excludes the name.")
+    return {"id": "news", "title": "In the news" if level == "beginner" else "News & sentiment",
+            "lead": lead, "points": points}
+
+
 # ------------------------------------------------------------------ beginner
 def _beginner(state: dict, dq: int) -> tuple[str, list[dict]]:
     p, opt, sim = state["user_profile"], state["optimized_portfolio"], state["simulation"]
@@ -189,6 +271,10 @@ def _beginner(state: dict, dq: int) -> tuple[str, list[dict]]:
     if not index_mode and ex["equity_leftover_rupees"] > 0:
         sections[-1]["points"].append(f"{inr(ex['equity_leftover_rupees'])} is left over after buying whole shares "
                                       f"— keep it in the cash jar.")
+    sections[-1]["points"].append(_beginner_strategy_point(state))
+    news_sec = _news_section(state, "beginner")
+    if news_sec:
+        sections.append(news_sec)
 
     lo = bl["expected_annual_return"] - bl["annual_volatility"]
     hi = bl["expected_annual_return"] + bl["annual_volatility"]
@@ -278,8 +364,13 @@ def _advanced(state: dict, dq: int) -> tuple[str, list[dict]]:
                          f"Measured equity–gold ρ {bl['equity_gold_correlation']}, gold σ {pct(bl['gold_volatility_used'])}",
                      ]})
 
+    if opt.get("strategy") == "hrp":
+        how = ("weighted by Hierarchical Risk Parity (single-linkage clustering on √((1−ρ)/2), "
+               "recursive bisection, inverse-variance split; stock/sector caps enforced afterwards)")
+    else:
+        how = f"weighted by mean-variance optimization — objective: {perf['method']}"
     lead = (f"{len(opt['equity_shortlist'])} names shortlisted by fundamental score (≤{MAX_PER_SECTOR_IN_SHORTLIST}/sector), "
-            f"weighted by mean-variance optimization — objective: {perf['method']}.")
+            f"{how}.")
     points = [
         f"Expected returns: CAPM equilibrium rf + β·(E[Rm] − rf) with a ±2% fundamental tilt",
         "Covariance: Ledoit-Wolf shrinkage",
@@ -293,9 +384,14 @@ def _advanced(state: dict, dq: int) -> tuple[str, list[dict]]:
         points.append(f"Execution: greedy discrete allocation, {inr(ex['equity_leftover_rupees'])} residual "
                       f"({pct(ex['equity_leftover_share'])} of sleeve).")
     if opt.get("excluded_tickers"):
-        points.append(f"Excluded after validation (unbuyable at this budget): {', '.join(map(_short, opt['excluded_tickers']))}")
+        points.append(f"Excluded after validation (unbuyable at this budget or news red flag): "
+                      f"{', '.join(map(_short, opt['excluded_tickers']))}")
+    points += _advanced_strategy_points(state)
     sections.append({"id": "stocks", "title": "Equity sleeve construction", "lead": lead, "points": points,
                      "cards": _stock_cards(state, "advanced")})
+    news_sec = _news_section(state, "advanced")
+    if news_sec:
+        sections.append(news_sec)
 
     points = []
     if er:

@@ -188,6 +188,7 @@ tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .tag { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
 .tag.live { background: var(--good-soft); color: var(--good); border-color: transparent; }
 .tag.synthetic { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.tag.flag { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 
 .toggle { flex-direction: row; align-items: center; gap: 6px; cursor: pointer; }
 .toggle input { width: auto; }

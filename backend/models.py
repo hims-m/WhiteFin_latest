@@ -125,6 +125,8 @@ class AnalyzeResponse(BaseModel):
     validation_history: list[ValidationReport] = []
     simulation: Optional[dict[str, Any]] = None
     backtest: Optional[dict[str, Any]] = None
+    news: Optional[dict[str, Any]] = None        # News & Sentiment Agent
+    strategy: Optional[dict[str, Any]] = None    # Strategy Selector Agent (MPT vs HRP)
     explanation: Optional[Explanation] = None
 
 

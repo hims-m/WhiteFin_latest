@@ -1,7 +1,7 @@
 """
 Validator Agent (critic)
 --------------------------
-Checks the Portfolio Optimization Agent's output against hard rules. If a
+Checks the Portfolio Optimization Agent's output against 9 hard rules. If a
 rule fails, it does not just report it — it writes concrete FEEDBACK that the
 optimizer applies on its next attempt (exclude a stock, tighten a cap, cut
 equity). The workflow loops optimizer -> validator until everything passes or
@@ -19,7 +19,17 @@ from config import (
 TOL = 0.005
 
 
-def run(profile: dict, portfolio: dict, attempt: int, previous_feedback: dict | None = None) -> dict:
+def _prefer_hrp(feedback: dict, cons: dict) -> None:
+    """Concentration problems under mean-variance usually come from noisy expected
+    returns. HRP ignores return estimates and spreads risk by construction, so
+    the Validator overrules the Strategy Selector and switches to it — unless the
+    volatility rule has already demanded min-volatility (that fix takes priority)."""
+    if cons.get("method") != "hrp" and not feedback.get("force_min_volatility"):
+        feedback["strategy"] = "hrp"
+
+
+def run(profile: dict, portfolio: dict, attempt: int, previous_feedback: dict | None = None,
+        news: dict | None = None) -> dict:
     previous_feedback = previous_feedback or {}
     checks = []
     feedback = {k: (list(v) if isinstance(v, list) else v) for k, v in previous_feedback.items()}
@@ -27,6 +37,7 @@ def run(profile: dict, portfolio: dict, attempt: int, previous_feedback: dict | 
     def check(name, passed, detail, fix=None):
         checks.append({"check": name, "passed": bool(passed), "detail": detail, "fix": fix if not passed else None})
 
+    concentrated = False
     bucket = portfolio["asset_class_allocation"]
     sleeve = portfolio["equity_weights_within_stocks_sleeve"]
     cons = portfolio["constraints_used"]
@@ -45,6 +56,7 @@ def run(profile: dict, portfolio: dict, attempt: int, previous_feedback: dict | 
           "tighten per-stock cap")
     if not ok:
         feedback["max_weight"] = round(max(0.2, cap - 0.05), 3)
+        concentrated = True
 
     # 3. sector concentration
     sec_cap = max(cons["sector_cap"], SECTOR_CAP)
@@ -63,6 +75,7 @@ def run(profile: dict, portfolio: dict, attempt: int, previous_feedback: dict | 
           "lower per-stock cap to spread weight")
     if not ok:
         feedback["max_weight"] = round(max(0.2, min(cons["max_weight"], MAX_SINGLE_STOCK_WEIGHT) - 0.1), 3)
+        concentrated = True
 
     # 5. equity share respects horizon / age ceiling
     ok = bucket["stocks"] <= portfolio["equity_ceiling"] + TOL
@@ -104,6 +117,24 @@ def run(profile: dict, portfolio: dict, attempt: int, previous_feedback: dict | 
     leftover = ex["equity_leftover_share"]
     check("Most of the equity budget is invested", leftover <= 0.25,
           f"{leftover:.0%} of the equity budget left uninvested after whole-share rounding")
+
+    if concentrated:
+        _prefer_hrp(feedback, cons)
+
+    # 9. no stock with a severe news red flag (fraud, regulator action, default...)
+    flagged = set((news or {}).get("flagged", []))
+    held_flagged = sorted(t for t in sleeve if t in flagged)
+    if news is None or news.get("status") == "no_data":
+        detail = "no live news available — nothing to check"
+    elif held_flagged:
+        per = news.get("per_ticker", {})
+        detail = "; ".join(f"{t}: {per.get(t, {}).get('severe_reason') or 'red flag'}" for t in held_flagged)
+    else:
+        detail = f"no red flags among the {len(sleeve)} chosen stocks"
+    ok = not held_flagged
+    check("No stock with a severe news flag", ok, detail, "drop the flagged stocks")
+    if not ok:
+        feedback["exclude"] = sorted(set(feedback.get("exclude", [])) | set(held_flagged))
 
     failed = [c for c in checks if not c["passed"]]
     fixable = [c for c in failed if c["fix"]]

@@ -1,14 +1,16 @@
 # docker compose up --build   ->  open http://localhost:8000
+# (inside the container the app listens on 7860, the Hugging Face port)
 services:
   whitefin:
     build: .
     ports:
-      - "8000:8000"
+      - "8000:7860"
     env_file:
       - path: backend/.env
         required: false
     environment:
-      CORS_ORIGINS: "http://localhost:8000,http://127.0.0.1:8000"
+      # Locally we can keep history between restarts in a named volume.
+      DATABASE_URL: "sqlite:////data/whitefin.db"
     volumes:
       - whitefin-data:/data
 volumes:

@@ -44,6 +44,8 @@ import numpy as np
 import pandas as pd
 from pypfopt import EfficientFrontier, risk_models
 from pypfopt.discrete_allocation import DiscreteAllocation
+from scipy.cluster.hierarchy import leaves_list, linkage
+from scipy.spatial.distance import squareform
 
 from config import (
     RISK_BUCKETS, HORIZON_EQUITY_CAPS, AGE_RULE_BASE,
@@ -56,6 +58,7 @@ from config import (
 from agents.risk_assessment import daily_returns, beta as estimate_beta, portfolio_risk
 
 PROFILE_METHOD = {"conservative": "min_volatility", "moderate": "balanced", "aggressive": "max_sharpe"}
+STRATEGIES = ("mpt", "hrp")   # chosen per request by the Strategy Selector Agent
 TRADING_DAYS = 252
 
 
@@ -143,6 +146,91 @@ def _perf(w: pd.Series, mu: pd.Series, S: pd.DataFrame) -> dict:
             "sharpe_ratio": round((ret - RISK_FREE_RATE) / vol, 3) if vol > 0 else None}
 
 
+# ======================================================== 2b'. Hierarchical Risk Parity
+def hrp_weights(price_df: pd.DataFrame) -> pd.Series:
+    """Hierarchical Risk Parity (López de Prado, 2016), written out by hand.
+
+    PyPortfolioOpt's HRPOpt crashes with SciPy >= 1.15, and the algorithm is short:
+      1. Cluster: distance d_ij = sqrt((1 - corr_ij) / 2), single-linkage tree.
+         Stocks that move together end up next to each other.
+      2. Quasi-diagonalise: order stocks by the tree's leaves.
+      3. Recursive bisection: split the ordered list in half, give each half
+         weight in inverse proportion to its variance, repeat inside each half.
+    No expected returns are used at all, so HRP cannot be fooled by noisy
+    return estimates; it only needs the covariance, and never inverts it.
+    """
+    r = daily_returns(price_df).dropna()
+    tickers = list(price_df.columns)
+    if len(tickers) == 1:
+        return pd.Series(1.0, index=tickers)
+    cov = r.cov().to_numpy()
+    corr = r.corr().to_numpy().copy()
+    np.fill_diagonal(corr, 1.0)
+    dist = np.sqrt(np.clip((1.0 - corr) / 2.0, 0.0, None))
+    np.fill_diagonal(dist, 0.0)
+    order = list(leaves_list(linkage(squareform(dist, checks=False), method="single")))
+
+    def cluster_var(idx: list[int]) -> float:
+        sub = cov[np.ix_(idx, idx)]
+        ivp = 1.0 / np.diag(sub)
+        ivp /= ivp.sum()
+        return float(ivp @ sub @ ivp)
+
+    w = np.ones(len(tickers))
+    clusters = [order]
+    while clusters:
+        nxt = []
+        for c in clusters:
+            if len(c) < 2:
+                continue
+            half = len(c) // 2
+            left, right = c[:half], c[half:]
+            v_l, v_r = cluster_var(left), cluster_var(right)
+            alpha = 1.0 - v_l / (v_l + v_r)
+            w[left] *= alpha
+            w[right] *= 1.0 - alpha
+            nxt += [left, right]
+        clusters = nxt
+    return pd.Series(w / w.sum(), index=tickers)
+
+
+def apply_caps(w: pd.Series, sector_map: dict, max_weight: float, sector_cap: float,
+               iterations: int = 200) -> pd.Series:
+    """Enforce the same per-stock and per-sector caps MPT uses, for weights that
+    came from a method without constraints (HRP). Excess weight is moved, in
+    proportion, to the positions that still have room. Repeats until stable."""
+    w = w.astype(float).copy()
+    w = w / w.sum()
+    for _ in range(iterations):
+        changed = False
+        # per-stock cap
+        over = w > max_weight + 1e-9
+        if over.any():
+            excess = float((w[over] - max_weight).sum())
+            w[over] = max_weight
+            room = w.index[~over & (w < max_weight - 1e-9)]
+            if len(room):
+                w[room] += excess * w[room] / w[room].sum()
+            changed = True
+        # per-sector cap
+        sec = pd.Series(sector_map).reindex(w.index)
+        totals = w.groupby(sec).sum()
+        for s_name, tot in totals.items():
+            if tot > sector_cap + 1e-9:
+                members = sec.index[sec == s_name]
+                excess = float(tot - sector_cap)
+                w[members] *= sector_cap / tot
+                full = set(totals[totals >= sector_cap - 1e-9].index) | {s_name}
+                room = [t for t in w.index if sec[t] not in full and w[t] < max_weight - 1e-9]
+                if room:
+                    w[room] += excess * w[room] / w[room].sum()
+                changed = True
+                totals = w.groupby(sec).sum()
+        if not changed:
+            break
+    return w / w.sum()
+
+
 def optimize_sleeve(price_df: pd.DataFrame, benchmark: pd.Series, sectors: dict, scores: dict,
                     method: str, max_weight: float = MAX_SINGLE_STOCK_WEIGHT,
                     sector_cap: float = SECTOR_CAP) -> dict:
@@ -183,7 +271,10 @@ def optimize_sleeve(price_df: pd.DataFrame, benchmark: pd.Series, sectors: dict,
 
     used = method
     try:
-        if method == "min_volatility":
+        if method == "hrp":
+            w = apply_caps(hrp_weights(price_df), sector_map, max_weight, sector_cap)
+            used = "hrp (hierarchical risk parity)"
+        elif method == "min_volatility":
             w = solve("min_volatility")
         elif method == "max_sharpe":
             w = solve("max_sharpe")
@@ -400,8 +491,15 @@ def vehicle_is_index(execution: dict) -> bool:
 
 
 # ======================================================== agent entry point
-def run(profile: dict, market_data: dict, fundamentals: dict, feedback: dict | None = None) -> dict:
+def run(profile: dict, market_data: dict, fundamentals: dict, feedback: dict | None = None,
+        strategy: str = "mpt") -> dict:
+    """`strategy` comes from the Strategy Selector Agent; the Validator can
+    override it through feedback["strategy"] (e.g. switch to HRP when MPT keeps
+    concentrating the portfolio)."""
     feedback = feedback or {}
+    strategy = feedback.get("strategy", strategy)
+    if strategy not in STRATEGIES:
+        strategy = "mpt"
     stocks = market_data["stocks"]
     bucket, adjustments, equity_ceiling = policy_allocation(profile, feedback)
 
@@ -411,7 +509,7 @@ def run(profile: dict, market_data: dict, fundamentals: dict, feedback: dict | N
                                         max_share_price=feedback.get("max_share_price"))
     price_df = pd.DataFrame({t: stocks[t]["history"] for t in shortlist}).dropna()
 
-    method = PROFILE_METHOD[profile["risk_tolerance"]]
+    method = "hrp" if strategy == "hrp" else PROFILE_METHOD[profile["risk_tolerance"]]
     if feedback.get("force_min_volatility"):
         method = "min_volatility"
     sleeve = optimize_sleeve(
@@ -463,6 +561,7 @@ def run(profile: dict, market_data: dict, fundamentals: dict, feedback: dict | N
         "betas": sleeve["betas"],
         "constraints_used": {"max_weight": sleeve["max_weight_used"], "sector_cap": sleeve["sector_cap_used"],
                              "method": method},
+        "strategy": "hrp" if method == "hrp" else "mpt",
         "blended": blended,
         "analytics": sleeve_analytics(sleeve, price_df),
         "blended_expected_annual_return": blended["expected_annual_return"],

@@ -72,3 +72,19 @@ Each item below was a problem found in the v1 code review. For each one: the pro
   - a daily-return correlation heatmap with the average pairwise ρ.
 - **Parser fix.** "10y" is now read as a 10-year horizon.
 - **Tests.** 60 tests: experience detection and override, both levels present, no jargon in the beginner text, and analytics validity.
+
+---
+
+# v2 → v2.1: two new agents and free hosting
+
+| # | Addition | Why | Where |
+|---|---|---|---|
+| 1 | **Hierarchical Risk Parity (HRP)** as a second way to weight the equity sleeve: correlation-distance clustering (single linkage), quasi-diagonal ordering, recursive bisection with inverse-variance splits. The same stock and sector caps are then enforced by `apply_caps()`. | Mean-variance relies on expected returns, which are noisy and can concentrate the portfolio. HRP needs only the covariance and never inverts it. It's written by hand because PyPortfolioOpt's `HRPOpt` crashes with SciPy ≥ 1.15. | `portfolio_optimization.py` |
+| 2 | **Strategy Selector Agent**: builds MPT and HRP from older data only, tests both on the held-out year, keeps the higher Sharpe (within 0.05 → smaller drawdown wins). Falls back to MPT on any error or short history. | The method is now chosen per request from evidence, not fixed in code. | `agents/strategy_selector.py`, `workflow.py` |
+| 3 | **Validator can overrule the selector**: if a concentration check fails under MPT, its feedback switches the optimizer to HRP (unless the volatility rule already demanded min-volatility). | Another real decision inside the critic loop. | `validator.py` |
+| 4 | **News & Sentiment Agent** (runs in parallel with Fundamentals and Risk): headlines from yfinance (both item formats) with a Google News RSS fallback, cached 6 h; one batched LLM call or a word-list fallback; regex red-flag patterns (fraud, SEBI/ED action, raids, insolvency, default, accounting issues). An LLM red flag only counts if it cites a real headline index, and the regex always applies, so an LLM can't invent a flag or hide one. Offline mode returns `no_data`. | News explains the mood around each pick. Sentiment is informational only and never changes weights, because headline sentiment is a weak, noisy signal. | `agents/news_sentiment.py` |
+| 5 | **Validator rule 9 — "No stock with a severe news flag"**: a held stock with a red flag is added to `exclude` and the optimizer re-runs. | Puts the news agent inside the generate → critique → revise loop. | `validator.py` |
+| 6 | Backtest caveat: the selector picks its method using the same test year, so the backtest is slightly flattering (selection bias). This is stated in the output. | Honest reporting. | `backtest.py` |
+| 7 | UI: News and Strategy nodes in the live pipeline; an "MPT vs HRP bake-off" card and a News column (with red-flag tags) in the experienced view; strategy and news sections in both explanation levels. | Makes the new decisions visible. | `frontend/` |
+| 8 | **Hugging Face Spaces deployment**: README front matter (`sdk: docker`, `app_port: 7860`), Dockerfile running as UID 1000 on port 7860 with the database in `/tmp`, `.dockerignore`, and the frontend calling the same origin whenever FastAPI serves it. | Free public hosting with 16 GB RAM, enough for the optimizer and Monte Carlo. | `Dockerfile`, `README.md`, `app.js` |
+| 9 | 20 new tests (80 total). | — | `tests/test_new_agents.py` |
