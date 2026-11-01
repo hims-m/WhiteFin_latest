@@ -1,6 +1,5 @@
 ---
 title: WhiteFIN
-emoji: 📈
 colorFrom: green
 colorTo: blue
 sdk: docker
