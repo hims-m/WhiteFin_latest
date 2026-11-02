@@ -9,7 +9,7 @@ license: mit
 short_description: Agentic multi-agent portfolio assistant (educational)
 ---
 
-# WhiteFIN v2 — Agentic AI Investment Assistant
+# WhiteFIN v2 - Agentic AI Investment Assistant
 
 WhiteFIN turns a plain-English request such as *"I have ₹1,00,000 and can add ₹5,000 a month. I'm 22, moderate risk, investing for 15 years"* into a researched, validated, explained portfolio. It is built entirely on free, open-source tools, and it runs with no API keys and no signup.
 
@@ -134,7 +134,7 @@ The Space builds the image (a few minutes) and goes live at `https://<your-usern
 The app is complete without an LLM. With one, the profiling agent understands vaguer messages and the explanation reads more naturally. Copy `backend/.env.example` to `backend/.env`, then pick one option:
 
 - **Local and offline:** install [Ollama](https://ollama.com), run `ollama pull llama3.2`, then set `OLLAMA_MODEL=llama3.2`.
-- **Gemini free tier:** set `GEMINI_API_KEY`. The model name is configurable through `GEMINI_MODEL`, because Google retires model names over time.
+- **Gemini free tier:** set `GEMINI_API_KEY`. The model name is configurable through `GEMINI_MODEL`, because Google retires model names over time. Preferred over ollama as it does not run only in our local system.
 
 The LLM never produces numbers. Every figure in its rewrite is checked against the agents' output, and the rewrite is discarded if anything differs.
 
