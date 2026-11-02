@@ -1,5 +1,6 @@
 ---
 title: WhiteFIN
+emoji: 📈
 colorFrom: green
 colorTo: blue
 sdk: docker
@@ -110,7 +111,19 @@ Open **http://127.0.0.1:8000**. The backend serves the dashboard too.
 docker compose up --build        # → http://localhost:8000
 ```
 
-### Deploy free on Hugging Face Spaces
+### Deploy free on Render
+
+The app is hosted on [Render](https://render.com)'s free tier, built straight from this repo's `Dockerfile`.
+
+1. Sign in to Render with GitHub → **New → Web Service** → pick this repo.
+2. Runtime **Docker**, instance type **Free**, environment variable `PORT` = `7860`.
+3. **Create Web Service.** Render rebuilds and redeploys on every push to `main`.
+
+Free services sleep after about 15 minutes without visitors, so the first visit after that takes 30–60 seconds. History is stored in `/tmp` and resets on every deploy or restart.
+
+### Deploy on Hugging Face Spaces
+
+Hugging Face now requires a PRO subscription for Docker Spaces; with one, these steps still work.
 
 The repo is already set up for a **Docker Space**: the front matter at the top of this README says `sdk: docker` and `app_port: 7860`, and the Dockerfile runs as user 1000 on port 7860.
 

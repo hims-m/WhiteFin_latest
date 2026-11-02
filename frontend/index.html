@@ -1,97 +1,151 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-palette="ocean">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WhiteFIN — Agentic Investment Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="vendor/chart.umd.min.js"></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo" aria-hidden="true">W</span>
-      <div>
-        <div class="brand-name">WhiteFIN</div>
-        <div class="brand-sub">Agentic investment assistant · educational project</div>
+  <div class="topbar-shell" data-header>
+    <nav class="topbar" aria-label="WhiteFIN">
+      <a class="brand" href="#top" aria-label="WhiteFIN, back to the top">
+        <span class="logo" aria-hidden="true">W</span>
+        <span class="brand-name">WhiteFIN</span>
+      </a>
+
+      <!-- Staggered menu: the same design as the BCH Uniforms site, without GSAP -->
+      <div class="sm-scope" data-staggered-menu>
+        <button class="sm-toggle" id="menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sm-panel">
+          <span class="sm-toggle-textWrap" aria-hidden="true">
+            <span class="sm-toggle-textInner" data-sm-text><span class="sm-toggle-line">Menu</span></span>
+          </span>
+          <span class="sm-icon" aria-hidden="true">
+            <span class="sm-icon-line sm-h"></span>
+            <span class="sm-icon-line sm-v"></span>
+          </span>
+        </button>
+
+        <div class="sm-wrapper" data-sm-wrapper>
+          <div class="sm-prelayers" aria-hidden="true">
+            <div class="sm-prelayer" style="background:var(--layer-1)"></div>
+            <div class="sm-prelayer" style="background:var(--layer-2)"></div>
+          </div>
+          <aside id="sm-panel" class="sm-panel" aria-hidden="true" inert>
+            <div class="sm-panel-inner">
+              <ul class="sm-panel-list" role="list">
+                <li class="sm-panel-itemWrap"><a class="sm-panel-item" href="#top" id="menu-new"><span class="sm-panel-itemLabel">New analysis</span></a></li>
+                <li class="sm-panel-itemWrap"><button class="sm-panel-item" type="button" id="history-btn"><span class="sm-panel-itemLabel">History</span></button></li>
+                <li class="sm-panel-itemWrap"><a class="sm-panel-item" id="docs-link" href="#" target="_blank" rel="noopener"><span class="sm-panel-itemLabel">API docs</span></a></li>
+              </ul>
+              <div class="sm-foot">
+                <h3 class="sm-foot-title">Status</h3>
+                <p class="sm-foot-line"><span id="status-chip" class="chip"><span class="long">Connecting…</span></span></p>
+                <p class="sm-foot-line sm-about">Agentic investment assistant · educational project. Not investment advice.</p>
+              </div>
+            </div>
+          </aside>
+        </div>
       </div>
-    </div>
-    <div class="topbar-right">
-      <span id="status-chip" class="chip">Connecting…</span>
-      <button id="history-btn" class="btn ghost" type="button">History</button>
-      <a id="docs-link" class="btn ghost" href="#" target="_blank" rel="noopener">API docs</a>
+    </nav>
+  </div>
+
+  <header class="hero" id="top">
+
+    <div class="hero-grid">
+      <div class="hero-copy">
+        <h1 class="reveal-up">Eleven agents.<br>One portfolio.</h1>
+        <p class="hero-sub reveal-up">Tell WhiteFIN your money, age, horizon and nerve in plain words. It studies 15 NSE stocks,
+          builds a portfolio of stocks, bonds, gold and cash, stress-tests it and explains every rupee.</p>
+
+        <form id="analyze-form" class="ask reveal-up">
+          <label class="sr-only" for="prompt">Describe your goal</label>
+          <div class="ask-box">
+            <textarea id="prompt" rows="3" required minlength="3"
+              placeholder="I have ₹1,00,000 and can add ₹5,000 a month. I'm 22, moderate risk, investing for 15 years."></textarea>
+            <button id="analyze-btn" class="btn primary" type="submit">Build my portfolio</button>
+          </div>
+          <div class="examples" id="examples"><span class="examples-label">Try</span></div>
+          <div class="ask-options">
+            <div class="level-pick">
+              <span>Explain it for</span>
+              <div class="segmented" id="level-input" role="radiogroup" aria-label="Explanation level">
+                <button type="button" data-level="" class="active" title="Detect from how you write">Auto</button>
+                <button type="button" data-level="beginner">Beginner</button>
+                <button type="button" data-level="advanced">Experienced</button>
+              </div>
+            </div>
+            <details class="advanced">
+              <summary>Exact values</summary>
+              <div class="grid2">
+                <label>Lump sum (₹)<input type="number" id="f-amount" min="0" step="any" placeholder="50000"></label>
+                <label>Monthly SIP (₹)<input type="number" id="f-sip" min="0" step="any" placeholder="0"></label>
+                <label>Age<input type="number" id="f-age" min="10" max="100" placeholder="22"></label>
+                <label>Horizon (years)<input type="number" id="f-horizon" min="1" max="60" placeholder="10"></label>
+                <label class="span2">Risk appetite
+                  <select id="f-risk">
+                    <option value="">Read from text</option>
+                    <option value="conservative">Conservative</option>
+                    <option value="moderate">Moderate</option>
+                    <option value="aggressive">Aggressive</option>
+                  </select>
+                </label>
+              </div>
+              <p class="hint">These override anything read from your text.</p>
+            </details>
+          </div>
+        </form>
+
+        <section class="clarify" id="clarify-card" hidden aria-live="polite">
+          <h2>A few quick questions</h2>
+          <p>The profiling agent couldn't find these in your message, so it's asking instead of guessing.</p>
+          <form id="clarify-form"></form>
+        </section>
+      </div>
+
+      <aside class="hero-graph reveal-up" id="activity-card" aria-label="Agent activity">
+        <div class="graph-head">
+          <h2>Agent graph</h2>
+          <span id="trace-total"></span>
+        </div>
+        <svg id="graph" role="img" aria-label="The eleven WhiteFIN agents and how they connect"></svg>
+        <p class="ticker" id="ticker" aria-live="polite">Waiting for your goal.</p>
+        <details class="log">
+          <summary>Activity log</summary>
+          <ol class="trace" id="trace"><li class="empty">Run an analysis to watch the agents work.</li></ol>
+        </details>
+      </aside>
     </div>
   </header>
 
-  <main class="layout">
-    <!-- ============ LEFT: input + live agent trace ============ -->
-    <aside class="left">
-      <section class="card">
-        <h2>What do you want to do?</h2>
-        <form id="analyze-form">
-          <textarea id="prompt" rows="4" required minlength="3"
-            placeholder="e.g. I have ₹1,00,000 and can add ₹5,000 a month. I'm 22, moderate risk, investing for 15 years."></textarea>
-          <div class="examples" id="examples"></div>
-          <div class="level-pick">
-            <span class="muted small">Explain it for</span>
-            <div class="segmented" id="level-input" role="radiogroup" aria-label="Explanation level">
-              <button type="button" data-level="" class="active" title="Detect from how you write">Auto</button>
-              <button type="button" data-level="beginner">Beginner</button>
-              <button type="button" data-level="advanced">Experienced</button>
-            </div>
-          </div>
-          <details class="advanced">
-            <summary>Exact values (optional — these override the text)</summary>
-            <div class="grid2">
-              <label>Lump sum (₹)<input type="number" id="f-amount" min="0" step="any" placeholder="50000"></label>
-              <label>Monthly SIP (₹)<input type="number" id="f-sip" min="0" step="any" placeholder="0"></label>
-              <label>Age<input type="number" id="f-age" min="10" max="100" placeholder="22"></label>
-              <label>Horizon (years)<input type="number" id="f-horizon" min="1" max="60" placeholder="10"></label>
-              <label class="span2">Risk appetite
-                <select id="f-risk">
-                  <option value="">— read from text —</option>
-                  <option value="conservative">Conservative</option>
-                  <option value="moderate">Moderate</option>
-                  <option value="aggressive">Aggressive</option>
-                </select>
-              </label>
-            </div>
-          </details>
-          <button id="analyze-btn" class="btn primary wide" type="submit">Analyze &amp; build my portfolio</button>
-        </form>
-      </section>
-
-      <section class="card" id="clarify-card" hidden>
-        <h2>A few quick questions</h2>
-        <p class="muted">The profiling agent couldn't find these in your message, so it's asking instead of guessing.</p>
-        <form id="clarify-form"></form>
-      </section>
-
-      <section class="card">
-        <div class="card-head">
-          <h2>Agent activity</h2>
-          <span class="muted small" id="trace-total"></span>
-        </div>
-        <ol class="pipeline" id="pipeline"></ol>
-        <ol class="trace" id="trace"><li class="muted empty">Run an analysis to watch the agents work.</li></ol>
-      </section>
-    </aside>
-
-    <!-- ============ RIGHT: results ============ -->
-    <section class="right" id="results">
-      <div class="placeholder card" id="placeholder">
+  <main class="page" id="results">
+    <section class="how" id="placeholder">
+      <div class="how-head">
         <h2>How it works</h2>
-        <p>Nine agents cooperate through a LangGraph state machine. They don't just run in a line: the
-          profiling agent can stop and ask you questions, two pairs of agents run in parallel, and a
-          validator agent can reject the portfolio and send it back for revision with specific fixes.</p>
-        <div id="graph-legend" class="legend-flow"></div>
-        <p class="muted small">All numbers come from deterministic finance code. An optional LLM only rewrites the wording, and its text is
-          rejected if it changes any figure.</p>
+        <p>Every number comes from deterministic finance code. An optional LLM only rewrites the wording,
+          and its text is rejected if it changes any figure.</p>
       </div>
+      <ol class="flow" id="graph-legend"></ol>
+    </section>
 
-      <div id="result-body" hidden>
+    <section class="loading" id="loading" hidden aria-live="polite">
+      <h2>Building your portfolio…</h2>
+      <div class="sk sk-line"></div>
+      <div class="sk-row"><div class="sk sk-tile"></div><div class="sk sk-tile"></div><div class="sk sk-tile"></div><div class="sk sk-tile"></div></div>
+      <div class="sk sk-block"></div>
+    </section>
+
+    <div id="result-body" hidden>
         <div class="result-head">
-          <div class="banner" id="data-banner" hidden></div>
+          <div class="lede">
+            <h2 class="title">Your portfolio plan</h2>
+            <p class="nutshell" id="nutshell"></p>
+            <p class="llm-note" id="llm-note" hidden></p>
+          </div>
           <div class="view-toggle">
             <span class="muted small">View as</span>
             <div class="segmented" id="level-view" role="radiogroup" aria-label="View level">
@@ -100,41 +154,40 @@
             </div>
           </div>
         </div>
+        <div class="banner" id="data-banner" hidden></div>
 
-        <section class="nutshell card" id="nutshell"></section>
-
-        <div class="kpis" id="kpis"></div>
-
-        <div class="row">
-          <section class="card">
-            <h2 id="alloc-title">Allocation</h2>
-            <div class="chart-box small-chart"><canvas id="alloc-chart"></canvas></div>
-            <ul class="adjustments" id="adjustments"></ul>
-          </section>
-          <section class="card grow">
-            <div class="card-head"><h2>What to buy</h2><span class="muted small" id="exec-basis"></span></div>
-            <div class="table-wrap"><table id="holdings"></table></div>
-            <p class="muted small" id="exec-note"></p>
-          </section>
-        </div>
+        <div class="kpis card" id="kpis"></div>
 
         <section class="card">
-          <h2 id="explain-title">Why — the explanation</h2>
+          <div class="card-head"><h2 id="alloc-title">Allocation</h2><span class="muted small" id="alloc-total"></span></div>
+          <div class="jar-bar" id="jar-bar" role="img"></div>
+          <div class="jars" id="jars"></div>
+          <ul class="adjustments" id="adjustments"></ul>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h2>What to buy</h2><span class="muted small" id="exec-basis"></span></div>
+          <div class="table-wrap"><table id="holdings"></table></div>
+          <p class="muted small chart-note" id="exec-note"></p>
+        </section>
+
+        <section class="card">
+          <h2 id="explain-title">Why this plan</h2>
           <div id="explanation" class="explanation"></div>
         </section>
 
         <!-- experienced-only analytics -->
         <div class="row adv-only">
-          <section class="card grow">
+          <section class="card">
             <h2>Efficient frontier (equity sleeve)</h2>
             <div class="chart-box"><canvas id="frontier-chart"></canvas></div>
-            <p class="muted small">Best expected return for each level of risk under the same per-stock and sector caps.
-              Dots are individual stocks; the star is the chosen sleeve.</p>
+            <p class="muted small chart-note">Best expected return for each level of risk under the same per-stock and sector caps.
+              Grey dots are individual stocks; the large teal dot is the chosen sleeve.</p>
           </section>
-          <section class="card grow">
+          <section class="card">
             <h2>Capital vs risk contribution</h2>
             <div class="chart-box"><canvas id="riskc-chart"></canvas></div>
-            <p class="muted small">Share of sleeve variance each holding contributes: w<sub>i</sub>(Σw)<sub>i</sub> / wᵀΣw.</p>
+            <p class="muted small chart-note">Share of sleeve variance each holding contributes: w<sub>i</sub>(Σw)<sub>i</sub> / wᵀΣw.</p>
           </section>
         </div>
         <section class="card adv-only">
@@ -145,26 +198,25 @@
         <section class="card">
           <div class="card-head">
             <h2 id="sim-title">Possible futures</h2>
-            <label class="toggle"><input type="checkbox" id="real-toggle"> show in today's money</label>
+            <label class="toggle"><input type="checkbox" id="real-toggle"> Adjust for inflation</label>
           </div>
           <div class="chart-box"><canvas id="sim-chart"></canvas></div>
-          <p class="muted small" id="sim-note"></p>
+          <p class="muted small chart-note" id="sim-note"></p>
         </section>
 
-        <div class="row">
-          <section class="card grow">
-            <h2 id="bt-title">Out-of-sample backtest</h2>
-            <p class="muted small beg-only">We picked the stocks using only data from before this period, then tracked what happened.
-              Lines start at 100 — 90 means a 10% drop.</p>
-            <div class="chart-box"><canvas id="bt-chart"></canvas></div>
-            <div class="table-wrap adv-only"><table id="bt-table"></table></div>
-            <p class="muted small" id="bt-note"></p>
+        <section class="card">
+          <h2 id="bt-title">Out-of-sample backtest</h2>
+          <p class="muted small beg-only">We picked the stocks using only data from before this period, then tracked what happened.
+            Lines start at 100, so 90 means a 10% drop.</p>
+          <div class="chart-box"><canvas id="bt-chart"></canvas></div>
+          <div class="table-wrap adv-only"><table id="bt-table"></table></div>
+          <p class="muted small chart-note" id="bt-note"></p>
           </section>
-          <section class="card validator-card adv-only">
-            <h2>Validator verdict</h2>
-            <div id="validator"></div>
-          </section>
-        </div>
+
+        <section class="card adv-only">
+          <h2>Validator verdict</h2>
+          <div id="validator"></div>
+        </section>
 
         <section class="card adv-only" id="strategy-card" hidden>
           <h2>Strategy bake-off: MPT vs HRP</h2>
@@ -181,7 +233,6 @@
 
         <p class="disclaimer" id="disclaimer"></p>
       </div>
-    </section>
   </main>
 
   <dialog id="history-dialog">

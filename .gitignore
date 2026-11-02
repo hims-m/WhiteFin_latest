@@ -14,3 +14,7 @@ Thumbs.db
 .idea/
 .pytest_cache/
 *.db
+
+# Claude skill working output
+.taste-skill/
+.playwright-cli/
